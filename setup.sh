@@ -12,10 +12,6 @@ sudo -u postgres psql -c "ALTER USER mob_db_user password 'mob_db_pass';"
 # Add user and create home directory for the user
 sudo useradd mob_app_usr -m -d "/home/mob_app_usr"
 
-#
-cd /home/mob_app_usr 
-git clone https://github.com/theophilusbittok1/Mobalysis.git
-
 # Install the 'python3-venv' package
 sudo apt install python3-venv
 
