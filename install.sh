@@ -10,9 +10,9 @@ export DBPORT="5432"
 #Install application packages for backend in virtual environment
 sudo apt-get install python3-pip
 sudo pip3 install virtualenv
-virtualenv env
-source env/bin/activate
-pip install <libraries>
+sudo virtualenv env
+sudo source env/bin/activate
+sudo pip install <libraries>
 
 # Clone Mobalysis repository to home directory
 cd /home/mob_app_usr 
