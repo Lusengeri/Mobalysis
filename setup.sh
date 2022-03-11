@@ -12,7 +12,7 @@ sudo -u postgres psql -c "grant all privileges on database mobalysis to mob_app_
 #Set up the mob_app_user user
 sudo useradd -m mob_app_user
 sudo chsh -s /sbin/nologin mob_app_user
-sudo -u mob_app_user sh -c 'cd /home/mob_app_user/ && git clone https://github.com/theophilusbittok1/Mobalysis'
+sudo -u mob_app_user sh -c 'cd /home/mob_app_user/ && git clone -b dev-moses https://github.com/theophilusbittok1/Mobalysis'
 
 #set up the application environment
 sudo  bash -c 'echo "export DBUSER=mob_app_user" >> /home/mob_app_user/.bashrc'
@@ -49,4 +49,3 @@ sudo -u mob_app_user bash -c 'cd /home/mob_app_user/Mobalysis/backend/'
 sudo -u mob_app_user bash -c 'uwsgi --ini /home/mob_app_user/Mobalysis/backend/uwsgi.ini'
 
 sudo chown mob_app_user:www-data /run/uwsgi/mobalysis.sock
-# sudo mkdir -p /run/uwsgi/ && chown mob_app_user:www-data /run/uwsgi
