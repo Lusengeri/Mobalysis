@@ -23,7 +23,7 @@ sudo  bash -c 'echo "export DBPORT=5432" >> /home/mob_app_user/.bashrc'
 
 # Setup the python environment and dependencies
 sudo -u mob_app_user sh -c 'cd /home/mob_app_user/ && /usr/bin/python3 -m venv .env'
-sudo -u mob_app_user bash -c 'cd /home/mob_app_user/ && source /home/mob_app_user/.env/bin/activate && pip3 install wheel uwsgi django && pip3 install -r /home/mob_app_user/Mobalysis/backend/requirements.txt && python /home/mob_app_user/Mobalysis/backend/manage.py migrate'
+sudo -u mob_app_user bash -c 'cd /home/mob_app_user/ && source /home/mob_app_user/.env/bin/activate && pip3 install wheel && pip3 install uwsgi && pip3 install django && pip3 install -r /home/mob_app_user/Mobalysis/backend/requirements.txt && python /home/mob_app_user/Mobalysis/backend/manage.py migrate'
 
 # Get IP address
 MY_IP=`curl -s https://icanhazip.com`
@@ -46,6 +46,6 @@ sudo mkdir -p /run/uwsgi/
 sudo chown mob_app_user:www-data /run/uwsgi/
 
 sudo -u mob_app_user bash -c 'cd /home/mob_app_user/Mobalysis/backend/'
-sudo -u mob_app_user bash -c 'uwsgi --ini /home/mob_app_user/Mobalysis/backend/uwsgi.ini'
+sudo -u mob_app_user bash -c 'source /home/mob_app_user/.env/bin/activate && uwsgi --ini /home/mob_app_user/Mobalysis/backend/uwsgi.ini'
 
 sudo chown mob_app_user:www-data /run/uwsgi/mobalysis.sock
