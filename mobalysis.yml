@@ -1,0 +1,12 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+  
+  - name: retrieve setup script and install app
+    shell: | 
+      cd /home/ubuntu/
+      wget https://raw.githubusercontent.com/theophilusbittok1/Mobalysis/dev-moses/setup.sh
+      chmod +x setup.sh
+      ./setup.sh
