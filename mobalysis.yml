@@ -1,12 +1,92 @@
 ---
 
-- hosts: all
-  become: true
+- hosts: localhost
   tasks:
-  
-  - name: retrieve setup script and install app
-    shell: | 
-      cd /home/ubuntu/
-      wget https://raw.githubusercontent.com/theophilusbittok1/Mobalysis/dev-moses/setup.sh
-      chmod +x setup.sh
-      ./setup.sh
+    - name: Setting up EC2 Security Group
+      ec2_group:
+        name: Mobalysis_AWS_Security_Grp
+        description: Allow traffic on port 22 and 80
+        region: us-west-2  
+        rules:
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 22
+            to_port: 22 
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+
+    - name: Provision an Ubuntu 20.04 EC2 Instance
+      ec2_instance:
+        key_name: "ore-key"
+        region: us-west-2
+        instance_type: t2.micro
+        image_id: ami-0892d3c7ee96c0bf7
+        wait: yes
+        wait_timeout: 500
+        tags:
+          Name: mobalysis-app
+        vpc_subnet_id: subnet-08faab941da349ba9
+        network:
+          assign_public_ip: true 
+        security_group: Mobalysis_AWS_Security_Grp
+      register: ec2_out
+
+    - name: Add new instances to host group
+      add_host: hostname={{ item.public_ip_address }} groupname=mobalysis_server
+      with_items: '{{ec2_out.instances}}'
+
+    - name: Wait for SSH to come up
+      wait_for: host={{ item.public_dns_name }} port=22 delay=60 timeout=320 state=started
+      with_items: '{{ ec2_out.instances }}'
+
+- hosts: mobalysis_server
+  vars:
+    frontend_path: /home/mob_app_user/Mobalysis/frontend
+  user: ubuntu
+  tasks:
+    - name: Install Mobalysis backend on new EC2 instance
+      shell: |
+        cd /home/ubuntu/
+        wget https://raw.githubusercontent.com/theophilusbittok1/Mobalysis/dev-moses/setup.sh
+        chmod +x setup.sh
+        ./setup.sh
+
+    - name: Install packages required to install frontend
+      apt:
+        name: curl
+        state: present
+   
+    - name: Download and install node
+      shell: 'curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash -'
+        
+    - name: Install packages required to install frontend
+      apt:
+        name: nodejs
+        state: present
+
+    - name: Install packages based on package.json using the npm
+      npm:
+        path: '{{ frontend_path }}'
+        state: present
+
+    - name: Build app
+      command: npm run build
+      args:
+        chdir: '{{ frontend_path }}'
+
+    - name: copy frontend build to /var/www
+      copy:
+        src: "{{ frontend_path }}/build/"
+        dest: /var/www/
+        remote_src: yes
+
+    - name: restart nginx
+      service:
+         name: nginx
+         state: restarted
+         enabled: yes
