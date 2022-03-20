@@ -20,55 +20,241 @@
           - proto: all
             cidr_ip: 0.0.0.0/0
 
-    - name: Provision an Ubuntu 20.04 EC2 Instance
-      ec2_instance:
+    - name: Provision two Ubuntu 20.04 EC2 Instances
+      ec2:
         key_name: "ore-key"
-        region: us-west-2
         instance_type: t2.micro
-        image_id: ami-0892d3c7ee96c0bf7
+        image: ami-0892d3c7ee96c0bf7
+        region: us-west-2
         wait: yes
-        wait_timeout: 500
-        tags:
+        wait_timeout: 120
+        instance_tags:
           Name: mobalysis-app
+        count_tag:
+          Name: mobalysis-app
+        exact_count: 2
         vpc_subnet_id: subnet-08faab941da349ba9
-        network:
-          assign_public_ip: true 
-        security_group: Mobalysis_AWS_Security_Grp
+        assign_public_ip: yes
+        group: Mobalysis_AWS_Security_Grp
       register: ec2_out
 
     - name: Add new instances to host group
-      add_host: hostname={{ item.public_ip_address }} groupname=mobalysis_server
-      with_items: '{{ec2_out.instances}}'
+      add_host: hostname={{ item.public_ip }} groupname=mobalysis_servers
+      with_items: '{{ ec2_out.tagged_instances }}'
+
+    - name: Create a target group with instance targets
+      elb_target_group:
+        name: mobalysis-tg
+        state: present
+        vpc_id: vpc-09ada00af341c7dd8
+        protocol: http
+        port: 80
+        health_check_protocol: http
+        health_check_path: /
+        successful_response_codes: "200,250-260"
+        targets:
+          - Id: '{{ ec2_out.tagged_instances[0].id }}'
+            Port: 80
+          - Id: '{{ ec2_out.tagged_instances[1].id }}'
+            Port: 80
+
+    - name: Create an ALB, attach a listener set the target group
+      elb_application_lb:
+        name: mobalysis-alb
+        security_groups:
+          - Mobalysis_AWS_Security_Grp
+        subnets:
+          - subnet-08faab941da349ba9
+          - subnet-0690c2d8548bfa2b4
+          - subnet-018ba559c2bc66c4d
+          - subnet-0cc289fd468d4fbf0
+        listeners:
+          - Protocol: HTTP
+            Port: 80
+            DefaultActions:
+              - Type: forward
+                TargetGroupName: mobalysis-tg
+        state: present
+
+    - name: Add EC2 instances as known hosts
+      known_hosts:
+        name: "{{ item.public_ip }}"
+        key: "{{ lookup('pipe', 'ssh-keyscan -t rsa ' + item.public_ip) }}"
+      with_items: "{{ ec2_out.tagged_instances }}"
 
     - name: Wait for SSH to come up
       wait_for: host={{ item.public_dns_name }} port=22 delay=60 timeout=320 state=started
-      with_items: '{{ ec2_out.instances }}'
+      with_items: '{{ ec2_out.tagged_instances }}'
 
-- hosts: mobalysis_server
-  become: true
-  vars:
-    frontend_path: /home/mob_app_user/Mobalysis/frontend
-  user: ubuntu
+- hosts: mobalysis_servers
+  become: True
+  gather_facts: no
   tasks:
-    - name: Install Mobalysis backend on new EC2 instance
-      shell: |
-        cd /home/ubuntu/
-        wget https://raw.githubusercontent.com/theophilusbittok1/Mobalysis/dev-moses/setup.sh
-        chmod +x setup.sh
-        ./setup.sh
+    - name: install postgres, python3 and python3 modules 
+      package:
+        name:
+          - python3
+          - python3-dev
+          - python3-distutils
+          - python3-venv
+          - python3-pip
+          - python3-psycopg2
+          - postgresql
+          - nginx
+          - gcc
+          - curl
+          - acl
+        state: latest
+        update_cache: yes
 
-    - name: Install packages required to install frontend
-      apt:
-        name: curl
-        state: present
-   
-    - name: Download and install node
+    - name: make symbolic link to python3 program
+      file:
+        src: /usr/bin/python3
+        dest: /usr/bin/python
+        state: link
+
+    - name: install node ppa
       shell: 'curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash -'
         
-    - name: Install packages required to install frontend
-      apt:
+    - name: install nodejs
+      package:
         name: nodejs
         state: present
+          
+    - name: Add the user 'mob_app_user' with a bash shell
+      user:
+        name: mob_app_user 
+        shell: /bin/bash
+        create_home: True
+
+- hosts: mobalysis_servers
+  become: true
+  become_user: postgres
+  gather_facts: no
+  tasks:
+    - name: create mobalysis database
+      postgresql_db:
+        state: present
+        name: mobalysis
+
+    - name: create database user
+      postgresql_user:
+        state: present
+        name: mob_app_user
+        password: mobdbpass
+
+    - name: grant privileges to database user 
+      postgresql_privs:
+        type: database
+        database: mobalysis 
+        roles: mob_app_user 
+        grant_option: no
+        privs: all
+    
+- hosts: mobalysis_servers
+  become: True 
+  become_user: mob_app_user
+  gather_facts: no
+  tasks:
+    - name: set environment variables 
+      lineinfile:
+        path: /home/mob_app_user/.bashrc
+        line: '{{ item }}'
+      with_items:
+        - export DBNAME=mobalysis
+        - export DBUSER=mob_app_user
+        - export DBHOST=127.0.0.1
+        - export DBPASS=mobdbpass
+        - export DBPORT=5432
+
+    - name: set up the python application's virtual environment
+      pip:
+        name:
+          - wheel
+          - uwsgi
+          - django
+        virtualenv: /home/mob_app_user/.env
+        virtualenv_command: /usr/bin/python3 -m venv
+
+    - name: clone the repository onto host
+      git:
+        repo: https://github.com/theophilusbittok1/Mobalysis.git
+        dest: /home/mob_app_user/Mobalysis
+        single_branch: yes
+        version: dev-moses
+        force: yes
+
+    - name: install modules required by mobalysis app
+      pip:
+        requirements: /home/mob_app_user/Mobalysis/backend/requirements.txt
+        virtualenv: /home/mob_app_user/.env
+ 
+    - name: application database migrations
+      django_manage:
+        app_path: /home/mob_app_user/Mobalysis/backend/
+        virtualenv: /home/mob_app_user/.env 
+        command: migrate
+  
+- hosts: mobalysis_servers
+  become: True
+  gather_facts: no
+  tasks:
+    - name: remove existing nginx config files
+      file:
+        path: '{{ item }}'
+        state: absent
+      with_items:
+        - /etc/nginx/sites-available/default
+        - /etc/nginx/sites-enabled/default
+
+    - name: copy new nginx config file
+      copy:
+        src: /home/mob_app_user/Mobalysis/mobalysis.conf
+        dest: /etc/nginx/sites-available/mobalysis.conf
+        remote_src: yes
+
+    - name: create symbolic link to nginx config file
+      file:
+        src: /etc/nginx/sites-available/mobalysis.conf
+        dest: /etc/nginx/sites-enabled/mobalysis.conf
+        state: link
+   
+- hosts: mobalysis_servers
+  become: True
+  gather_facts: no
+  tasks:
+    - name: create directories for uwsgi log file and socket 
+      file:
+        path: '{{item}}'
+        owner: mob_app_user 
+        group: www-data
+        recurse: yes
+        state: directory
+      with_items:
+        - /var/log/uwsgi/
+        - /run/uwsgi/
+
+- hosts: mobalysis_servers
+  become: True
+  become_user: mob_app_user
+  gather_facts: no
+  tasks:
+    - name: start uwsgi 
+      shell: 'source /home/mob_app_user/.env/bin/activate && uwsgi --ini /home/mob_app_user/Mobalysis/backend/uwsgi.ini'
+      args:
+        executable: /usr/bin/bash
+    
+- hosts: mobalysis_servers
+  become: True
+  gather_facts: no
+  vars:
+    frontend_path: /home/mob_app_user/Mobalysis/frontend
+  tasks:
+    - name: change ownership of uwsgi socket
+      file:
+        path: /run/uwsgi/mobalysis.sock
+        owner: mob_app_user
+        group: www-data
 
     - name: Install packages based on package.json using the npm
       npm:
